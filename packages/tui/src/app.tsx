@@ -86,6 +86,7 @@ import * as TuiAudio from "./audio"
 import { win32DisableProcessedInput, win32FlushInputBuffer } from "./terminal-win32"
 import { destroyRenderer } from "./util/renderer"
 import { cliErrorMessage, errorFormat } from "./util/error"
+import { createTuiClipboard, formatClipboardWriteNotification } from "./clipboard"
 
 registerOpencodeSpinner()
 
@@ -211,6 +212,13 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
             destroyRenderer(renderer)
           }),
       )
+      const clipboard = yield* Effect.acquireRelease(
+        Effect.sync(() => createTuiClipboard(renderer)),
+        (clipboard) =>
+          Effect.tryPromise(() => clipboard.dispose()).pipe(
+            Effect.catchCause((cause) => Effect.logError("Failed to dispose TUI clipboard", { cause })),
+          ),
+      )
       win32DisableProcessedInput()
       const keymap = createDefaultOpenTuiKeymap(renderer)
       yield* Effect.acquireRelease(
@@ -252,33 +260,37 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
               }}
             >
               <EpilogueProvider set={(value) => (exit.epilogue = value)}>
-                <ErrorBoundary fallback={(error, reset) => <ErrorComponent error={error} reset={reset} mode={mode} />}>
-                  <TuiPathsProvider
-                    value={{
-                      cwd: process.cwd(),
-                      home: global.home,
-                      state: global.state,
-                      worktree: global.data + "/worktree",
-                    }}
-                  >
-                    <TuiTerminalEnvironmentProvider
+                <ClipboardProvider value={clipboard}>
+                  <ErrorBoundary fallback={(error, reset) => <ErrorComponent error={error} reset={reset} mode={mode} />}>
+                    <TuiPathsProvider
                       value={{
-                        platform: process.platform,
-                        multiplexer: process.env.TMUX ? "tmux" : process.env.STY ? "screen" : undefined,
-                        displayServer: process.env.WAYLAND_DISPLAY
-                          ? "wayland"
-                          : process.env.DISPLAY
-                            ? "x11"
-                            : undefined,
+                        cwd: process.cwd(),
+                        home: global.home,
+                        state: global.state,
+                        worktree: global.data + "/worktree",
                       }}
                     >
-                      <TuiStartupProvider
+                      <TuiTerminalEnvironmentProvider
                         value={{
-                          initialRoute: process.env.OPENCODE_ROUTE ? JSON.parse(process.env.OPENCODE_ROUTE) : undefined,
-                          skipInitialLoading: Boolean(process.env.OPENCODE_FAST_BOOT),
+                          platform: process.platform,
+                          multiplexer: process.env.TMUX ? "tmux" : process.env.STY ? "screen" : undefined,
+                          displayServer: process.env.WAYLAND_DISPLAY
+                            ? "wayland"
+                            : process.env.DISPLAY
+                              ? "x11"
+                              : undefined,
                         }}
                       >
-                        <ClipboardProvider>
+                        <TuiStartupProvider
+                          value={{
+                            initialRoute: process.env.OPENCODE_SCRAP
+                              ? { type: "plugin", id: "scrap" }
+                              : process.env.OPENCODE_ROUTE
+                                ? JSON.parse(process.env.OPENCODE_ROUTE)
+                                : undefined,
+                            skipInitialLoading: Boolean(process.env.OPENCODE_FAST_BOOT),
+                          }}
+                        >
                           <OpencodeKeymapProvider keymap={keymap}>
                             <ArgsProvider {...input.args}>
                               <KVProvider>
@@ -340,11 +352,11 @@ export const run = Effect.fn("Tui.run")(function* (input: TuiInput) {
                               </KVProvider>
                             </ArgsProvider>
                           </OpencodeKeymapProvider>
-                        </ClipboardProvider>
-                      </TuiStartupProvider>
-                    </TuiTerminalEnvironmentProvider>
-                  </TuiPathsProvider>
-                </ErrorBoundary>
+                        </TuiStartupProvider>
+                      </TuiTerminalEnvironmentProvider>
+                    </TuiPathsProvider>
+                  </ErrorBoundary>
+                </ClipboardProvider>
               </EpilogueProvider>
             </ExitProvider>
           )
@@ -438,8 +450,12 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
     if (!text || text.length === 0) return
 
     await clipboard
-      .write?.(text)
-      .then(() => toast.show({ message: "Copied to clipboard", variant: "info" }))
+      .write(text)
+      .then((outcome) =>
+        toast.show(
+          formatClipboardWriteNotification(outcome, { message: "Copied to clipboard", variant: "info" }),
+        ),
+      )
       .catch(toast.error)
 
     renderer.clearSelection()
@@ -601,8 +617,12 @@ function App(props: { onSnapshot?: () => Promise<string[]>; pluginHost: TuiPlugi
           const workspace = currentWorktreeWorkspace()
           if (!workspace?.directory) return
           await clipboard
-            .write?.(workspace.directory)
-            .then(() => toast.show({ message: "Copied worktree path", variant: "info" }))
+            .write(workspace.directory)
+            .then((outcome) =>
+              toast.show(
+                formatClipboardWriteNotification(outcome, { message: "Copied worktree path", variant: "info" }),
+              ),
+            )
             .catch(toast.error)
           dialog.clear()
         },

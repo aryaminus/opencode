@@ -6,6 +6,8 @@ import { useRoute } from "../../context/route"
 import { useClipboard } from "../../context/clipboard"
 import type { PromptInfo } from "../../component/prompt/history"
 import { stripPromptPartIDs as strip } from "../../prompt/part"
+import { formatClipboardWriteNotification } from "../../clipboard"
+import { useToast } from "../../ui/toast"
 
 export function DialogMessage(props: {
   messageID: string
@@ -17,6 +19,7 @@ export function DialogMessage(props: {
   const message = createMemo(() => sync.data.message[props.sessionID]?.find((x) => x.id === props.messageID))
   const route = useRoute()
   const clipboard = useClipboard()
+  const toast = useToast()
 
   return (
     <DialogSelect
@@ -69,8 +72,19 @@ export function DialogMessage(props: {
               return agg
             }, "")
 
-            await clipboard.write?.(text)
-            dialog.clear()
+            if (!text) {
+              toast.show({ message: "No text content found in message", variant: "error" })
+              return
+            }
+            try {
+              const outcome = await clipboard.write(text)
+              toast.show(
+                formatClipboardWriteNotification(outcome, { message: "Copied to clipboard", variant: "info" }),
+              )
+              dialog.clear()
+            } catch (error) {
+              toast.error(error)
+            }
           },
         },
         {

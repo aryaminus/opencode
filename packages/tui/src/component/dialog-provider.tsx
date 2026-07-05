@@ -15,6 +15,7 @@ import { isConsoleManagedProvider } from "../util/provider-origin"
 import { useConnected } from "./use-connected"
 import { useBindings } from "../keymap"
 import { useClipboard } from "../context/clipboard"
+import { formatClipboardWriteNotification } from "../clipboard"
 
 const PROVIDER_PRIORITY: Record<string, number> = {
   opencode: 0,
@@ -254,8 +255,12 @@ function AutoMethod(props: AutoMethodProps) {
           const code =
             props.authorization.instructions.match(/[A-Z0-9]{4}-[A-Z0-9]{4,5}/)?.[0] ?? props.authorization.url
           clipboard
-            .write?.(code)
-            .then(() => toast.show({ message: "Copied to clipboard", variant: "info" }))
+            .write(code)
+            .then((outcome) =>
+              toast.show(
+                formatClipboardWriteNotification(outcome, { message: "Copied to clipboard", variant: "info" }),
+              ),
+            )
             .catch(toast.error)
         },
       },

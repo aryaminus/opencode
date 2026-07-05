@@ -6,12 +6,13 @@ import { useClipboard } from "../context/clipboard"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { useExit } from "../context/exit"
 import { describeOS, describeTerminal } from "../util/system"
+import { clipboardCopyState, type ClipboardCopyState } from "../clipboard"
 
 export function ErrorComponent(props: { error: Error; reset: () => void; mode?: "dark" | "light" }) {
   const term = useTerminalDimensions()
   const exit = useExit()
   const clipboard = useClipboard()
-  const [copied, setCopied] = createSignal(false)
+  const [copyState, setCopyState] = createSignal<ClipboardCopyState>("idle")
 
   // Safe fallback palette per mode (mirrors theme/assets/opencode.json) since the
   // theme context may be the thing that crashed.
@@ -27,6 +28,7 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?: 
         onPrimary: "#ffffff",
         error: "#d1383d",
         success: "#3d9a57",
+        warning: "#c18401",
       }
     : {
         bg: "#0a0a0a",
@@ -38,6 +40,7 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?: 
         onPrimary: "#0a0a0a",
         error: "#e06c75",
         success: "#7fd88f",
+        warning: "#e5c07b",
       }
 
   const message = props.error.message || "An unknown error occurred."
@@ -45,11 +48,27 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?: 
   const issueURL = buildIssueURL(message, stack)
 
   const copyReport = () => {
-    void clipboard.write?.(issueURL.toString()).then(() => setCopied(true))
+    void clipboard
+      .write(issueURL.toString())
+      .then((outcome) => setCopyState(clipboardCopyState(outcome)))
+      .catch(() => setCopyState("failed"))
   }
 
   const actions = [
-    { key: "c", label: () => (copied() ? "✓ Copied" : "Copy report"), copy: true, onUse: copyReport },
+    {
+      key: "c",
+      label: () =>
+        ({
+          idle: "Copy report",
+          confirmed: "Copied",
+          "confirmed-partial": "Copied (terminal failed)",
+          attempted: "Sent",
+          "attempted-partial": "Sent (host failed)",
+          failed: "Copy failed",
+        })[copyState()],
+      copy: true,
+      onUse: copyReport,
+    },
     { key: "r", label: () => "Restart", onUse: props.reset },
     { key: "q", label: () => "Quit", onUse: () => exit() },
   ]
@@ -134,13 +153,18 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?: 
           <For each={actions}>
             {(action, index) => {
               const isSelected = () => selected() === index()
-              const isCopied = () => action.copy && copied()
+              const copyColor = () => {
+                if (!action.copy) return
+                if (copyState() === "confirmed") return colors.success
+                if (copyState() === "confirmed-partial" || copyState() === "attempted-partial") return colors.warning
+                if (copyState() === "failed") return colors.error
+              }
               return (
                 <box flexDirection="column" alignItems="center" flexShrink={0}>
                   <box
                     onMouseDown={() => setSelected(index())}
                     onMouseUp={() => action.onUse()}
-                    backgroundColor={isCopied() ? colors.success : isSelected() ? colors.primary : colors.element}
+                    backgroundColor={copyColor() ?? (isSelected() ? colors.primary : colors.element)}
                     minWidth={15}
                     alignItems="center"
                     paddingLeft={2}
@@ -148,7 +172,7 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?: 
                   >
                     <text
                       attributes={TextAttributes.BOLD}
-                      fg={isCopied() || isSelected() ? colors.onPrimary : colors.text}
+                      fg={copyColor() || isSelected() ? colors.onPrimary : colors.text}
                     >
                       {action.label()}
                     </text>
@@ -188,9 +212,14 @@ export function ErrorComponent(props: { error: Error; reset: () => void; mode?: 
         <Show when={showFooter()}>
           <box flexDirection="column" alignItems="center" flexShrink={0}>
             <text fg={colors.muted}>
-              {copied()
-                ? "Report copied — paste it into a new GitHub issue."
-                : "Copy the report and open a GitHub issue to help us fix this."}
+              {{
+                idle: "Copy the report and open a GitHub issue to help us fix this.",
+                confirmed: "Report copied. Paste it into a new GitHub issue.",
+                "confirmed-partial": "Report copied to host clipboard; terminal dispatch failed.",
+                attempted: "Report sent to terminal clipboard; acceptance is unconfirmed.",
+                "attempted-partial": "Report sent to terminal clipboard; host clipboard write failed.",
+                failed: "Clipboard write failed. Try again or report the crash manually.",
+              }[copyState()]}
             </text>
             <text fg={colors.muted}>opencode {InstallationVersion}</text>
           </box>
