@@ -9,6 +9,7 @@ import { useClipboard } from "../context/clipboard"
 import { useToast } from "../ui/toast"
 import { useBindings } from "../keymap"
 import { describeOS, describeTerminal } from "../util/system"
+import { formatClipboardWriteNotification } from "../clipboard"
 
 export function DialogDebug() {
   const { theme } = useTheme()
@@ -37,13 +38,22 @@ export function DialogDebug() {
     const text = entries()
       .map((entry) => `${entry.label}: ${entry.value}`)
       .join("\n")
+    setCopied(false)
     void clipboard
-      .write?.(text)
-      .then(() => {
-        setCopied(true)
-        toast.show({ message: "Debug info copied to clipboard", variant: "info" })
+      .write(text)
+      .then((outcome) => {
+        setCopied(outcome.delivery === "confirmed")
+        toast.show(
+          formatClipboardWriteNotification(outcome, {
+            message: "Debug info copied to clipboard",
+            variant: "info",
+          }),
+        )
       })
-      .catch(toast.error)
+      .catch((error) => {
+        setCopied(false)
+        toast.error(error)
+      })
   }
 
   useBindings(() => ({

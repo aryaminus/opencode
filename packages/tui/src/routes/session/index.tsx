@@ -469,8 +469,15 @@ export function Session() {
       run: async () => {
         const copy = (url: string) =>
           clipboard
-            .write?.(url)
-            .then(() => toast.show({ message: "Share URL copied to clipboard!", variant: "success" }))
+            .write(url)
+            .then((outcome) =>
+              toast.show(
+                formatClipboardWriteNotification(outcome, {
+                  message: "Share URL copied to clipboard!",
+                  variant: "success",
+                }),
+              ),
+            )
             .catch(() => toast.show({ message: "Failed to copy URL to clipboard", variant: "error" }))
         const url = session()?.share?.url
         if (url) {
