@@ -153,8 +153,7 @@ current omissions to implement, not intentional product boundaries.
       shims. Consider `Promise.any` in the same pass.
 - [ ] Support async iteration and `for await...of`. Define behavior first for the runtime's supported promise and
       collection values, then extend it to bounded host streams when a stream boundary exists.
-- [ ] Support callback-bearing standard-library variants that models commonly generate: the mapper argument to
-      `Array.from(...)` and replacers for `JSON.stringify(...)`, including Effect-aware callbacks where needed.
+- [ ] Support the mapper argument to `Array.from(...)`, including Effect-aware callbacks.
 - [ ] Add `Object.is` after runtime method and tool references have stable identity semantics.
 - [ ] Add deterministic modern collection conveniences where they improve orchestration: `Object.groupBy`, Set
       composition methods, and `Array.prototype.toSpliced`.

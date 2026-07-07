@@ -1,9 +1,4 @@
-import {
-  type AstNode,
-  CodeModeFunction,
-  InterpreterRuntimeError,
-  supportedSyntaxMessage,
-} from "../interpreter/model.js"
+import { type AstNode, InterpreterRuntimeError } from "../interpreter/model.js"
 import { copyIn, copyOut } from "../tool-runtime.js"
 
 export const jsonStatics = new Set(["stringify", "parse"])
@@ -12,18 +7,13 @@ export const invokeJsonMethod = (name: string, args: Array<unknown>, node: AstNo
   if (!jsonStatics.has(name)) throw new InterpreterRuntimeError(`JSON.${name} is not available in CodeMode.`, node)
   switch (name) {
     case "stringify": {
-      const replacer = args[1]
-      if (Array.isArray(replacer) || replacer instanceof CodeModeFunction) {
-        throw new InterpreterRuntimeError(
-          "JSON.stringify replacers are not supported in CodeMode.",
-          node,
-          "UnsupportedSyntax",
-          [supportedSyntaxMessage],
-        )
-      }
       const space = args[2]
       const indent = typeof space === "number" || typeof space === "string" ? space : undefined
-      return JSON.stringify(copyOut(copyIn(args[0], "JSON.stringify value")), null, indent)
+      return JSON.stringify(
+        copyOut(copyIn(args[0], "JSON.stringify value")),
+        Array.isArray(args[1]) ? args[1] : null,
+        indent,
+      )
     }
     case "parse": {
       const text = args[0]

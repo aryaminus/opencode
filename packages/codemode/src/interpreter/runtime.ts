@@ -5,6 +5,7 @@ import {
   copyIn,
   copyOut,
   isBlockedMember,
+  MAX_VALUE_DEPTH,
   ToolReference,
   ToolRuntime,
   ToolRuntimeError,
@@ -2027,6 +2028,7 @@ class Interpreter<R> {
       }
       if (callable instanceof GlobalMethodReference) {
         if (callable.namespace === "console") return self.invokeConsole(callable.name, args, node)
+        if (callable.namespace === "JSON") return yield* self.invokeJsonMethod(callable.name, args, node)
         if (callable.namespace === "Object" && args[0] instanceof ToolReference) {
           return self.invokeObjectMethodOnTools(callable.name, args[0], node)
         }
@@ -2492,6 +2494,90 @@ class Interpreter<R> {
     })
   }
 
+  private invokeJsonMethod(
+    name: string,
+    args: Array<unknown>,
+    node: AstNode,
+  ): Effect.Effect<unknown, unknown, R> {
+    const callback = args[1]
+    const callable =
+      callback instanceof CodeModeFunction || callback instanceof CoercionFunction || callback instanceof UriFunction
+    if (name === "parse" && callable) return this.parseJsonWithReviver(args, node)
+    if (name === "stringify" && (callable || Array.isArray(callback))) {
+      return this.stringifyJsonWithReplacer(args, node)
+    }
+    return Effect.sync(() => invokeJsonMethod(name, args, node))
+  }
+
+  private parseJsonWithReviver(args: Array<unknown>, node: AstNode): Effect.Effect<unknown, unknown, R> {
+    const apply = this.applySettledCollectionCallback(args[1], "JSON.parse", node)
+    const parsed = invokeJsonMethod("parse", [args[0]], node)
+    const visit = (key: string, item: unknown): Effect.Effect<unknown, unknown, R> =>
+      Effect.gen(function* () {
+        if (Array.isArray(item)) {
+          for (let index = 0; index < item.length; index += 1) {
+            if (!(index in item)) continue
+            const revived = yield* visit(String(index), item[index])
+            if (revived === undefined) delete item[index]
+            else item[index] = revived
+          }
+        } else if (item !== null && typeof item === "object" && !isSandboxValue(item)) {
+          for (const childKey of Object.keys(item)) {
+            const revived = yield* visit(childKey, (item as SafeObject)[childKey])
+            if (revived === undefined) delete (item as SafeObject)[childKey]
+            else (item as SafeObject)[childKey] = revived
+          }
+        }
+        return yield* apply([key, item])
+      })
+    return visit("", parsed)
+  }
+
+  private stringifyJsonWithReplacer(args: Array<unknown>, node: AstNode): Effect.Effect<unknown, unknown, R> {
+    const callback = args[1]
+    const apply = Array.isArray(callback)
+      ? undefined
+      : this.applySettledCollectionCallback(callback, "JSON.stringify", node)
+    const propertyList = Array.isArray(callback)
+      ? Array.from(
+          new Set(
+            callback
+              .filter((item): item is string | number => typeof item === "string" || typeof item === "number")
+              .map(String),
+          ),
+        )
+      : undefined
+    const visit = (key: string, item: unknown, depth: number): Effect.Effect<unknown, unknown, R> =>
+      Effect.gen(function* () {
+        if (depth > MAX_VALUE_DEPTH) {
+          throw new ToolRuntimeError(
+            "InvalidDataValue",
+            `JSON.stringify replacer result exceeds the maximum value depth of ${MAX_VALUE_DEPTH}.`,
+          )
+        }
+        const resolved = apply === undefined ? item : yield* apply([key, item])
+        if (resolved === null || typeof resolved !== "object") return resolved
+        const value = copyIn(resolved, "JSON.stringify replacer result")
+        if (value === null || typeof value !== "object") return value
+        if (Array.isArray(value)) {
+          for (let index = 0; index < value.length; index += 1) {
+            value[index] = yield* visit(String(index), value[index], depth + 1)
+          }
+          return value
+        }
+        const output: SafeObject = Object.create(null) as SafeObject
+        for (const childKey of propertyList ?? Object.keys(value as SafeObject)) {
+          if (!Object.hasOwn(value as SafeObject, childKey) || isBlockedMember(childKey)) continue
+          const child = yield* visit(childKey, (value as SafeObject)[childKey], depth + 1)
+          if (child !== undefined) output[childKey] = child
+        }
+        return output
+      })
+    return Effect.map(visit("", copyIn(args[0], "JSON.stringify value"), 0), (value) =>
+      invokeJsonMethod("stringify", [value, propertyList, args[2]], node),
+    )
+  }
+
   // Runs a collection callback accepting a user function or supported builtin callable,
   // mirroring the array-method callback contract.
   private applyCollectionCallback(
@@ -2512,6 +2598,18 @@ class Interpreter<R> {
         : callback instanceof UriFunction
           ? Effect.succeed(invokeUriFunction(callback, callbackArgs, node))
           : this.invokeFunction(callback, callbackArgs)
+  }
+
+  private applySettledCollectionCallback(
+    callback: unknown,
+    name: string,
+    node: AstNode,
+  ): (args: Array<unknown>) => Effect.Effect<unknown, unknown, R> {
+    const apply = this.applyCollectionCallback(callback, name, node)
+    return (args) =>
+      Effect.flatMap(apply(args), (value) =>
+        value instanceof SandboxPromise ? this.settlePromise(value, node) : Effect.succeed(value),
+      )
   }
 
   private invokeMapMethod(

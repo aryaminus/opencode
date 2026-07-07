@@ -119,7 +119,7 @@ export class ToolReference {
  * limit) purely because it produces a clearer diagnostic than a native stack-overflow
  * RangeError would.
  */
-const MAX_VALUE_DEPTH = 32
+export const MAX_VALUE_DEPTH = 32
 
 export class ToolRuntimeError extends Error {
   constructor(
