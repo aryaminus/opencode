@@ -86,6 +86,35 @@ describe("JSON", () => {
     )
   })
 
+  test("stringify function replacers observe live mutations and sandbox values", async () => {
+    expect(
+      await value(`
+        const item = { a: 1, b: 2 }
+        const visited = []
+        const mutated = JSON.stringify(item, (key, value) => {
+          visited.push(key)
+          if (key === "a") item.b = 3
+          return value
+        })
+        const mapped = JSON.stringify(new Map([["x", 1]]), (key, value) =>
+          value instanceof Map ? Object.fromEntries(value) : value
+        )
+        const removed = { a: 1, b: 2 }
+        const deleted = JSON.stringify(removed, (key, value) => {
+          if (key === "a") removed.b = undefined
+          if (key === "b") visited.push(value === undefined ? "missing" : "present")
+          return value
+        })
+        return { mutated, mapped, deleted, visited }
+      `),
+    ).toEqual({
+      mutated: '{"a":1,"b":3}',
+      mapped: '{"x":1}',
+      deleted: '{"a":1}',
+      visited: ["", "a", "b", "missing"],
+    })
+  })
+
   test("stringify replacer arrays coerce, dedupe, and recursively filter object keys", async () => {
     expect(
       await value(`

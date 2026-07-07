@@ -2538,6 +2538,7 @@ class Interpreter<R> {
     const apply = Array.isArray(callback)
       ? undefined
       : this.applySettledCollectionCallback(callback, "JSON.stringify", node)
+    const ancestors = new Set<object>()
     const propertyList = Array.isArray(callback)
       ? Array.from(
           new Set(
@@ -2555,25 +2556,43 @@ class Interpreter<R> {
             `JSON.stringify replacer result exceeds the maximum value depth of ${MAX_VALUE_DEPTH}.`,
           )
         }
-        const resolved = apply === undefined ? item : yield* apply([key, item])
+        const callbackValue =
+          apply !== undefined && (item instanceof SandboxDate || item instanceof SandboxURL)
+            ? copyIn(item, "JSON.stringify value")
+            : item
+        const resolved = apply === undefined ? item : yield* apply([key, callbackValue])
         if (resolved === null || typeof resolved !== "object") return resolved
-        const value = copyIn(resolved, "JSON.stringify replacer result")
-        if (value === null || typeof value !== "object") return value
-        if (Array.isArray(value)) {
-          for (let index = 0; index < value.length; index += 1) {
-            value[index] = yield* visit(String(index), value[index], depth + 1)
+        if (isSandboxValue(resolved)) return copyIn(resolved, "JSON.stringify replacer result")
+        if (!Array.isArray(resolved)) {
+          const prototype = Object.getPrototypeOf(resolved)
+          if (prototype !== Object.prototype && prototype !== null) {
+            return copyIn(resolved, "JSON.stringify replacer result")
           }
-          return value
         }
-        const output: SafeObject = Object.create(null) as SafeObject
-        for (const childKey of propertyList ?? Object.keys(value as SafeObject)) {
-          if (!Object.hasOwn(value as SafeObject, childKey) || isBlockedMember(childKey)) continue
-          const child = yield* visit(childKey, (value as SafeObject)[childKey], depth + 1)
-          if (child !== undefined) output[childKey] = child
+        if (ancestors.has(resolved)) {
+          throw new ToolRuntimeError("InvalidDataValue", "JSON.stringify replacer result contains a circular value.")
         }
-        return output
+        ancestors.add(resolved)
+        return yield* Effect.gen(function* () {
+          if (Array.isArray(resolved)) {
+            const output: Array<unknown> = []
+            const length = resolved.length
+            for (let index = 0; index < length; index += 1) {
+              output[index] = yield* visit(String(index), resolved[index], depth + 1)
+            }
+            return output
+          }
+          const output: SafeObject = Object.create(null) as SafeObject
+          for (const childKey of propertyList ?? Object.keys(resolved)) {
+            if (isBlockedMember(childKey)) continue
+            if (apply === undefined && !Object.hasOwn(resolved, childKey)) continue
+            const child = yield* visit(childKey, (resolved as SafeObject)[childKey], depth + 1)
+            if (child !== undefined) output[childKey] = child
+          }
+          return output
+        }).pipe(Effect.ensuring(Effect.sync(() => ancestors.delete(resolved))))
       })
-    return Effect.map(visit("", copyIn(args[0], "JSON.stringify value"), 0), (value) =>
+    return Effect.map(visit("", args[0], 0), (value) =>
       invokeJsonMethod("stringify", [value, propertyList, args[2]], node),
     )
   }
