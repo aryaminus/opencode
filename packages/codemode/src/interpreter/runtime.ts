@@ -2511,26 +2511,34 @@ class Interpreter<R> {
 
   private parseJsonWithReviver(args: Array<unknown>, node: AstNode): Effect.Effect<unknown, unknown, R> {
     const apply = this.applySettledCollectionCallback(args[1], "JSON.parse", node)
-    const parsed = invokeJsonMethod("parse", [args[0]], node)
     const visit = (key: string, item: unknown): Effect.Effect<unknown, unknown, R> =>
       Effect.gen(function* () {
         if (Array.isArray(item)) {
           for (let index = 0; index < item.length; index += 1) {
             if (!(index in item)) continue
             const revived = yield* visit(String(index), item[index])
-            if (revived === undefined) delete item[index]
-            else item[index] = revived
+            if (revived === undefined) {
+              delete item[index]
+              continue
+            }
+            item[index] = revived
           }
-        } else if (item !== null && typeof item === "object" && !isSandboxValue(item)) {
-          for (const childKey of Object.keys(item)) {
-            const revived = yield* visit(childKey, (item as SafeObject)[childKey])
-            if (revived === undefined) delete (item as SafeObject)[childKey]
-            else (item as SafeObject)[childKey] = revived
+          return yield* apply([key, item])
+        }
+        if (item !== null && typeof item === "object" && !isSandboxValue(item)) {
+          const object = item as SafeObject
+          for (const childKey of Object.keys(object)) {
+            const revived = yield* visit(childKey, object[childKey])
+            if (revived === undefined) {
+              delete object[childKey]
+              continue
+            }
+            object[childKey] = revived
           }
         }
         return yield* apply([key, item])
       })
-    return visit("", parsed)
+    return visit("", invokeJsonMethod("parse", [args[0]], node))
   }
 
   private stringifyJsonWithReplacer(args: Array<unknown>, node: AstNode): Effect.Effect<unknown, unknown, R> {
@@ -2556,11 +2564,15 @@ class Interpreter<R> {
             `JSON.stringify replacer result exceeds the maximum value depth of ${MAX_VALUE_DEPTH}.`,
           )
         }
-        const callbackValue =
-          apply !== undefined && (item instanceof SandboxDate || item instanceof SandboxURL)
-            ? copyIn(item, "JSON.stringify value")
-            : item
-        const resolved = apply === undefined ? item : yield* apply([key, callbackValue])
+        const resolved = yield* (() => {
+          if (apply === undefined) return Effect.succeed(item)
+          return apply([
+            key,
+            item instanceof SandboxDate || item instanceof SandboxURL
+              ? copyIn(item, "JSON.stringify value")
+              : item,
+          ])
+        })()
         if (resolved === null || typeof resolved !== "object") return resolved
         if (isSandboxValue(resolved)) {
           return apply === undefined
