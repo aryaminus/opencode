@@ -2562,7 +2562,11 @@ class Interpreter<R> {
             : item
         const resolved = apply === undefined ? item : yield* apply([key, callbackValue])
         if (resolved === null || typeof resolved !== "object") return resolved
-        if (isSandboxValue(resolved)) return copyIn(resolved, "JSON.stringify replacer result")
+        if (isSandboxValue(resolved)) {
+          return apply === undefined
+            ? copyIn(resolved, "JSON.stringify replacer result")
+            : (Object.create(null) as SafeObject)
+        }
         if (!Array.isArray(resolved)) {
           const prototype = Object.getPrototypeOf(resolved)
           if (prototype !== Object.prototype && prototype !== null) {

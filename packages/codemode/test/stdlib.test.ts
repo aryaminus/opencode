@@ -81,9 +81,14 @@ describe("JSON", () => {
         return { json, order }
       `),
     ).toEqual({ json: '{"keep":1,"items":[1,null]}', order: ["", "keep", "drop", "items", "0", "1"] })
-    expect(await value(`return JSON.stringify(1, (key, item) => key === "" ? new Date(0) : item)`)).toBe(
-      '"1970-01-01T00:00:00.000Z"',
-    )
+    expect(
+      await value(`
+        return [
+          JSON.stringify(1, (key, item) => key === "" ? new Date(0) : item),
+          JSON.stringify(1, (key, item) => key === "" ? new URL("https://example.test") : item),
+        ]
+      `),
+    ).toEqual(["{}", "{}"])
   })
 
   test("stringify function replacers observe live mutations and sandbox values", async () => {
